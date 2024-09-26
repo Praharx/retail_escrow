@@ -85,14 +85,45 @@ pub mod retail_escrow {
             amount
         )?;
 
-       escrow.state = EscrowState::Completed;
+        escrow.state = EscrowState::Completed;
+
+        Ok(())
+    } 
+
+    pub fn auto_release(ctx: Context<AutoRelease>) -> Result<()> {
+        let escrow = &mut ctx.accounts.escrow;
+        let current_time = Clock::get()?.unix_timestamp;
+        
+        require!(escrow.state == EscrowState::AwaitingConfirmation, EscrowError::InvalidEscrowState);
+        require!(current_time > (escrow.delivery_confirmed_at + 604800), EscrowError::AutoReleaseTimeNotReached);
+
+        let transfer_instruction = Transfer{
+            from: ctx.accounts.escrow_token_account.to_account_info(),
+            to: ctx.accounts.retailer_token_account.to_account_info(),
+            authority: ctx.accounts.escrow.to_account_info()
+        };
+        
+        let escrow = &mut ctx.accounts.escrow;
+        
+        let seeds= &[
+            b"escrow".as_ref(),
+            &escrow.escrow_id.to_le_bytes(),
+            &[ctx.bumps.escrow]
+        ]; 
+        
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                transfer_instruction,
+                &[seeds]
+            ),
+            escrow.amount
+        )?;
+
+        escrow.state = EscrowState::Completed;
 
         Ok(())
     }
-
-   
-
-    
 }
 
 #[derive(Accounts)]
@@ -141,6 +172,18 @@ pub struct ConfirmReceipt<'info> {
     pub token_program: Program<'info, Token>
 }
 
+#[derive(Accounts)]
+#[instruction(escrow_id:u64)]
+pub struct AutoRelease<'info> {
+    #[account(mut, seeds= [b"escrow", &escrow_id.to_le_bytes()], bump)]
+    pub escrow: Account<'info, Escrow>,
+    #[account(mut)]
+    pub escrow_token_account: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub retailer_token_account: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>
+}
+
 #[account]
 pub struct Escrow {
     pub buyer: Pubkey,
@@ -153,7 +196,7 @@ pub struct Escrow {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
 pub enum EscrowState { // usually enum's options take up 1 byte of space
-    AwaitingDelivery, // this will be set by the retailer
+    AwaitingDelivery,//0 // this will be set by the retailer
     AwaitingConfirmation, // this will be set by the buyer
     Completed
 }
@@ -163,7 +206,9 @@ pub enum EscrowError {
     #[msg("Invalid escrow state please check")]
     InvalidEscrowState,
     #[msg("Sorry, the confirmation period has expired!")]
-    ConfirmationPeriodExpired
+    ConfirmationPeriodExpired,
+    #[msg("Autorelease time not reached")]
+    AutoReleaseTimeNotReached,
 }
 
 
