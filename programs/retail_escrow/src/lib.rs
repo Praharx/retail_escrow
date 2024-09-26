@@ -18,7 +18,6 @@ pub mod retail_escrow {
         escrow.retailer = retailer_key;
         escrow.escrow_id = escrow_id;
         escrow.amount = amount;
-        escrow.created_at = Clock::get()?.unix_timestamp;
         escrow.state = EscrowState::AwaitingDelivery;
         escrow.is_completed = false;
 
@@ -36,6 +35,18 @@ pub mod retail_escrow {
             ),
             amount
         )?;
+
+        Ok(())
+    }
+
+
+    pub fn confirm_delivery(ctx: Context<ConfirmDelivery>) -> Result<()> {
+        let escrow = &mut ctx.accounts.escrow;
+
+        require!(escrow.state == EscrowState::AwaitingDelivery, EscrowError::InvalidEscrowState);
+
+        escrow.state = EscrowState::AwaitingConfirmation;
+        escrow.delivery_confirmed_at = Clock::get()?.unix_timestamp;
 
         Ok(())
     }
@@ -64,6 +75,13 @@ pub struct InitializeEscrow<'info> {
     pub rent: Sysvar<'info, Rent>
 }
 
+#[derive(Accounts)]
+pub struct ConfirmDelivery<'info> {
+    #[account(mut)]
+    pub escrow: Account<'info, Escrow>,
+    pub retailer: Signer<'info>,
+}
+
 #[account]
 pub struct Escrow {
     pub buyer: Pubkey,
@@ -71,7 +89,7 @@ pub struct Escrow {
     pub escrow_id: u64,
     pub amount: u64,
     pub state: EscrowState, 
-    pub created_at: i64,
+    pub delivery_confirmed_at: i64,
     pub is_completed: bool,
 }
 
@@ -80,6 +98,12 @@ pub enum EscrowState { // usually enum's options take up 1 byte of space
     AwaitingDelivery, // this will be set by the retailer
     AwaitingConfirmation, // this will be set by the buyer
     Completed
+}
+
+#[error_code]
+pub enum EscrowError {
+    #[msg("Invalid escrow state please check")]
+    InvalidEscrowState,
 }
 
 
