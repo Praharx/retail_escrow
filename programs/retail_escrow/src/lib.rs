@@ -19,7 +19,6 @@ pub mod retail_escrow {
         escrow.escrow_id = escrow_id;
         escrow.amount = amount;
         escrow.state = EscrowState::AwaitingDelivery;
-        escrow.is_completed = false;
 
         // Transfer funds from buyer token account to escrow token account
         let transfer_instruction = Transfer {
@@ -50,6 +49,50 @@ pub mod retail_escrow {
 
         Ok(())
     }
+
+    pub fn confirm_receipt(ctx: Context<ConfirmReceipt>) -> Result<()> {
+        let escrow = &mut ctx.accounts.escrow;
+        let current_time = Clock::get()?.unix_timestamp;
+        let amount = escrow.amount;
+      
+        require!(escrow.state == EscrowState::AwaitingConfirmation, EscrowError::InvalidEscrowState);
+        require!(
+            current_time <= escrow.delivery_confirmed_at + 604800, // 7 days in seconds(Buyer should confirm within the 7 days window about product confirmation),
+            EscrowError::ConfirmationPeriodExpired
+        );
+
+        let seeds= &[
+            b"escrow".as_ref(),
+            &escrow.escrow_id.to_le_bytes(),
+            &[ctx.bumps.escrow]
+        ];        
+
+        // Transfer funds from escrow token account to retailer token account
+        let transfer_instruction = Transfer {
+            from: ctx.accounts.escrow_token_account.to_account_info(),
+            to: ctx.accounts.retailer_token_account.to_account_info(),
+            authority:ctx.accounts.escrow.to_account_info()
+        };
+
+        let escrow = &mut ctx.accounts.escrow;
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(), 
+                transfer_instruction,
+                &[seeds]
+            ),
+            amount
+        )?;
+
+       escrow.state = EscrowState::Completed;
+
+        Ok(())
+    }
+
+   
+
+    
 }
 
 #[derive(Accounts)]
@@ -60,8 +103,8 @@ pub struct InitializeEscrow<'info> {
     #[account(
         init,
         payer = buyer,
-        space = 8 + 32 + 32 + 8 + 8 + 1+ 8 + 1,
-        seeds = [b"escrow", buyer.key().as_ref(), &escrow_id.to_le_bytes()],
+        space = 8 + 32 + 32 + 8 + 8 + 1+ 8,
+        seeds = [b"escrow", escrow_id.to_le_bytes().as_ref()],
         bump
     )]
     pub escrow: Account<'info, Escrow>,
@@ -82,6 +125,22 @@ pub struct ConfirmDelivery<'info> {
     pub retailer: Signer<'info>,
 }
 
+#[derive(Accounts)]
+#[instruction(escrow_id:u64)]
+pub struct ConfirmReceipt<'info> {
+    #[account(
+        mut,
+        seeds = [b"escrow", &escrow_id.to_le_bytes()],
+        bump)]
+    pub escrow: Account<'info, Escrow>,
+    pub buyer: Signer<'info>,
+    #[account(mut)]
+    pub escrow_token_account: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub retailer_token_account: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>
+}
+
 #[account]
 pub struct Escrow {
     pub buyer: Pubkey,
@@ -90,7 +149,6 @@ pub struct Escrow {
     pub amount: u64,
     pub state: EscrowState, 
     pub delivery_confirmed_at: i64,
-    pub is_completed: bool,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
@@ -104,6 +162,8 @@ pub enum EscrowState { // usually enum's options take up 1 byte of space
 pub enum EscrowError {
     #[msg("Invalid escrow state please check")]
     InvalidEscrowState,
+    #[msg("Sorry, the confirmation period has expired!")]
+    ConfirmationPeriodExpired
 }
 
 
