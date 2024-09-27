@@ -143,6 +143,7 @@ pub struct InitializeEscrow<'info> {
     pub buyer_token_account: Account<'info, TokenAccount>,
     #[account(mut)]
     pub escrow_token_account: Account<'info, TokenAccount>,
+    /// CHECK: This is not dangerous because we don't read or write from this accoun
     pub retailer: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
